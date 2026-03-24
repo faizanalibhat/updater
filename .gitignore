@@ -1,0 +1,16 @@
+# Binary
+updater
+updater_linux_*
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+
+# Temp
+tmp/
+*.log
