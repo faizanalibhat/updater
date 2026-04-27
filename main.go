@@ -46,16 +46,18 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
 	var (
-		fInstall   = flag.Bool("install", false, "install and start the systemd service (requires sudo)")
-		fUninstall = flag.Bool("uninstall", false, "stop and remove the systemd service (requires sudo)")
-		fStatus    = flag.Bool("status", false, "show systemd service status")
-		fConfig    = flag.String("config", "", "path to config.yaml (overrides $SNAPSEC_AGENT_CONFIG and the default)")
-		fAdminURL  = flag.String("admin-url", "", "(install) admin server base URL, e.g. https://admin.snapsec.co")
-		fEnroll    = flag.String("enrollment-token", "", "(install) one-time enrollment token issued by the admin panel")
-		fInstallDir = flag.String("install-dir", "", "(install) product install directory containing setup.sh")
-		fMongoURI  = flag.String("mongo-uri", "", "(install) mongo URI used by the set_license_expiry capability")
-		fMongoDB   = flag.String("mongo-db", "", "(install) mongo database name")
-		fVersion   = flag.Bool("version", false, "print version and exit")
+		fInstall        = flag.Bool("install", false, "install and start the systemd service (requires sudo)")
+		fUninstall      = flag.Bool("uninstall", false, "stop and remove the systemd service (requires sudo)")
+		fStatus         = flag.Bool("status", false, "show systemd service status")
+		fConfig         = flag.String("config", "", "path to config.yaml (overrides $SNAPSEC_AGENT_CONFIG and the default)")
+		fAdminURL       = flag.String("admin-url", "", "(install) admin server base URL, e.g. https://admin.snapsec.co")
+		fEnroll         = flag.String("enrollment-token", "", "(install) one-time enrollment token issued by the admin panel")
+		fInstallDir     = flag.String("install-dir", "", "(install) product install directory containing setup.sh")
+		fMongoURI       = flag.String("mongo-uri", "", "(install) mongo URI used by the set_license_expiry capability")
+		fMongoDB        = flag.String("mongo-db", "", "(install) mongo database name")
+		fCFAccessID     = flag.String("cf-access-id", "", "(install) Cloudflare Access service token client id")
+		fCFAccessSecret = flag.String("cf-access-secret", "", "(install) Cloudflare Access service token client secret")
+		fVersion        = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
 
@@ -66,7 +68,7 @@ func main() {
 
 	switch {
 	case *fInstall:
-		installService(*fConfig, *fAdminURL, *fEnroll, *fInstallDir, *fMongoURI, *fMongoDB)
+		installService(*fConfig, *fAdminURL, *fEnroll, *fInstallDir, *fMongoURI, *fMongoDB, *fCFAccessID, *fCFAccessSecret)
 		return
 	case *fUninstall:
 		uninstallService()
@@ -110,7 +112,7 @@ func main() {
 
 // ---- service management ---------------------------------------------------
 
-func installService(cfgPath, adminURL, enrollment, installDir, mongoURI, mongoDB string) {
+func installService(cfgPath, adminURL, enrollment, installDir, mongoURI, mongoDB, cfID, cfSecret string) {
 	binPath, err := os.Executable()
 	if err != nil {
 		log.Fatalf("resolve binary path: %v", err)
@@ -141,6 +143,12 @@ func installService(cfgPath, adminURL, enrollment, installDir, mongoURI, mongoDB
 	}
 	if mongoDB != "" {
 		cfg.MongoDatabase = mongoDB
+	}
+	if cfID != "" {
+		cfg.CFAccessClientID = cfID
+	}
+	if cfSecret != "" {
+		cfg.CFAccessClientSecret = cfSecret
 	}
 	if cfg.CurrentVersion == "" {
 		cfg.CurrentVersion = version

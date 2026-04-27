@@ -199,6 +199,10 @@ func (c *Client) postJSON(ctx context.Context, url string, in any, out any) erro
 	if c.cfg.AgentID != "" {
 		req.Header.Set("X-Agent-ID", c.cfg.AgentID)
 	}
+	if c.cfg.CFAccessClientID != "" && c.cfg.CFAccessClientSecret != "" {
+		req.Header.Set("CF-Access-Client-Id", c.cfg.CFAccessClientID)
+		req.Header.Set("CF-Access-Client-Secret", c.cfg.CFAccessClientSecret)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

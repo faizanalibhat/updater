@@ -29,6 +29,13 @@ type Config struct {
 	// registration. It is cleared from the file once an agent_id is issued.
 	EnrollmentToken string `yaml:"enrollment_token,omitempty"`
 
+	// CFAccessClientID and CFAccessClientSecret authenticate the agent to
+	// Cloudflare Access (service token) when the admin host sits behind
+	// Cloudflare Zero Trust. Both are optional; when set they are sent as
+	// CF-Access-Client-Id / CF-Access-Client-Secret on every request.
+	CFAccessClientID     string `yaml:"cf_access_client_id,omitempty"`
+	CFAccessClientSecret string `yaml:"cf_access_client_secret,omitempty"`
+
 	// HeartbeatIntervalSeconds controls how often the agent beats.
 	HeartbeatIntervalSeconds int `yaml:"heartbeat_interval_seconds"`
 
