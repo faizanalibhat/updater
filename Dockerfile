@@ -1,38 +1,24 @@
+# Build a release binary for snapsec-agent. The agent runs as a systemd
+# service on the host (not inside a container); this image is used purely
+# as a portable build environment / artefact source for self-update.
+
 FROM golang:1.22-alpine AS builder
 
-RUN apk add --no-cache git
+ARG VERSION=dev
+RUN apk add --no-cache git ca-certificates
 
-WORKDIR /app
-
+WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o updater .
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /out/snapsec-agent .
 
-# --- Runtime stage ---
-FROM alpine:3.20
-
-RUN apk add --no-cache \
-    ca-certificates \
-    docker-cli \
-    docker-cli-compose \
-    openssh-client \
-    curl \
-    bash
-
-# Install upterm
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi && \
-    curl -fsSL "https://github.com/owenthereal/upterm/releases/latest/download/upterm_linux_${ARCH}.tar.gz" | \
-    tar xz -C /usr/local/bin upterm
-
-WORKDIR /app
-COPY --from=builder /app/updater .
-
-# Bind to localhost only
-ENV UPDATER_PORT=9876
-
-EXPOSE 9876
-
-CMD ["./updater"]
+# Final stage: minimal scratch image so the binary can be copied out
+# (e.g. `docker create --name x snapsec-agent && docker cp x:/snapsec-agent ./`).
+FROM scratch
+COPY --from=builder /out/snapsec-agent /snapsec-agent
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENTRYPOINT ["/snapsec-agent"]

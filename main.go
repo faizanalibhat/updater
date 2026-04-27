@@ -1,221 +1,189 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
-	"time"
+	"syscall"
 
-	"updater/handlers"
+	"snapsec-agent/internal/agent"
+	"snapsec-agent/internal/capabilities"
+	"snapsec-agent/internal/config"
 )
 
-type depCheck struct {
-	Name    string
-	Cmd     string
-	Args    []string
-	Purpose string
-}
+// version is overridden at build time via -ldflags="-X main.version=..."
+var version = "dev"
 
-func checkDependencies() {
-	deps := []depCheck{
-		{"docker", "docker", []string{"--version"}, "/api/update"},
-		{"docker compose", "docker", []string{"compose", "version"}, "/api/update"},
-		{"upterm", "upterm", []string{"version"}, "/api/shell"},
-	}
-
-	var missing []string
-	for _, d := range deps {
-		cmd := exec.Command(d.Cmd, d.Args...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			missing = append(missing, fmt.Sprintf("  ❌ %-18s (needed for %s)", d.Name, d.Purpose))
-		} else {
-			ver := strings.TrimSpace(strings.Split(string(out), "\n")[0])
-			log.Printf("  ✅ %-18s %s", d.Name, ver)
-		}
-	}
-
-	if len(missing) > 0 {
-		log.Println("\n⚠️  Missing dependencies (endpoints will fail without them):")
-		for _, m := range missing {
-			log.Println(m)
-		}
-		log.Println()
-	}
-}
+const serviceName = "snapsec-agent.service"
 
 const serviceTemplate = `[Unit]
-Description=Updater Daemon (Docker update & shell access)
-After=network.target docker.service
-Requires=docker.service
+Description=Snapsec on-prem management agent
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStart=%s
-WorkingDirectory=%s
 Restart=always
 RestartSec=5
-Environment=UPDATER_PORT=%s
-Environment=COMPOSE_WORK_DIR=%s
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin
+Environment=SNAPSEC_AGENT_CONFIG=%s
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=updater
+SyslogIdentifier=snapsec-agent
 
 [Install]
 WantedBy=multi-user.target
 `
 
-func installService() {
+func main() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
+	var (
+		fInstall   = flag.Bool("install", false, "install and start the systemd service (requires sudo)")
+		fUninstall = flag.Bool("uninstall", false, "stop and remove the systemd service (requires sudo)")
+		fStatus    = flag.Bool("status", false, "show systemd service status")
+		fConfig    = flag.String("config", "", "path to config.yaml (overrides $SNAPSEC_AGENT_CONFIG and the default)")
+		fAdminURL  = flag.String("admin-url", "", "(install) admin server base URL, e.g. https://admin.snapsec.co")
+		fEnroll    = flag.String("enrollment-token", "", "(install) one-time enrollment token issued by the admin panel")
+		fInstallDir = flag.String("install-dir", "", "(install) product install directory containing setup.sh")
+		fMongoURI  = flag.String("mongo-uri", "", "(install) mongo URI used by the set_license_expiry capability")
+		fMongoDB   = flag.String("mongo-db", "", "(install) mongo database name")
+		fVersion   = flag.Bool("version", false, "print version and exit")
+	)
+	flag.Parse()
+
+	if *fVersion {
+		fmt.Println(version)
+		return
+	}
+
+	switch {
+	case *fInstall:
+		installService(*fConfig, *fAdminURL, *fEnroll, *fInstallDir, *fMongoURI, *fMongoDB)
+		return
+	case *fUninstall:
+		uninstallService()
+		return
+	case *fStatus:
+		cmd := exec.Command("systemctl", "status", serviceName)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+		return
+	}
+
+	// Foreground / service mode.
+	cfgPath := *fConfig
+	if cfgPath == "" {
+		cfgPath = config.DefaultPath()
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	if cfg.AdminURL == "" {
+		log.Fatalf("config %s: admin_url is empty (re-run with --install or edit the file)", cfgPath)
+	}
+
+	reg := capabilities.NewRegistry()
+	reg.Register("update_application", capabilities.UpdateApplication(cfg.InstallDir))
+	reg.Register("set_license_expiry", capabilities.SetLicenseExpiry(cfg.MongoURI, cfg.MongoDatabase))
+
+	log.Printf("snapsec-agent version=%s config=%s admin=%s", version, cfg.Path(), cfg.AdminURL)
+	log.Printf("registered capabilities: %s", strings.Join(reg.Names(), ", "))
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := agent.Run(ctx, cfg, reg, version); err != nil && err != context.Canceled {
+		log.Fatalf("agent: %v", err)
+	}
+}
+
+// ---- service management ---------------------------------------------------
+
+func installService(cfgPath, adminURL, enrollment, installDir, mongoURI, mongoDB string) {
 	binPath, err := os.Executable()
 	if err != nil {
-		log.Fatalf("failed to resolve binary path: %v", err)
+		log.Fatalf("resolve binary path: %v", err)
 	}
-	workDir := filepath.Dir(binPath)
-
-	port := os.Getenv("UPDATER_PORT")
-	if port == "" {
-		port = "9876"
+	if real, err := filepath.EvalSymlinks(binPath); err == nil {
+		binPath = real
 	}
 
-	composeDir := os.Getenv("COMPOSE_WORK_DIR")
-	if composeDir == "" {
-		// Check for --compose-dir flag
-		for i, arg := range os.Args {
-			if arg == "--compose-dir" && i+1 < len(os.Args) {
-				composeDir = os.Args[i+1]
-				break
-			}
-			if strings.HasPrefix(arg, "--compose-dir=") {
-				composeDir = strings.TrimPrefix(arg, "--compose-dir=")
-				break
-			}
-		}
-	}
-	if composeDir == "" {
-		composeDir = workDir // fallback to binary dir
+	if cfgPath == "" {
+		cfgPath = config.DefaultPath()
 	}
 
-	unit := fmt.Sprintf(serviceTemplate, binPath, workDir, port, composeDir)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+	if adminURL != "" {
+		cfg.AdminURL = adminURL
+	}
+	if enrollment != "" {
+		cfg.EnrollmentToken = enrollment
+	}
+	if installDir != "" {
+		cfg.InstallDir = installDir
+	}
+	if mongoURI != "" {
+		cfg.MongoURI = mongoURI
+	}
+	if mongoDB != "" {
+		cfg.MongoDatabase = mongoDB
+	}
+	if cfg.CurrentVersion == "" {
+		cfg.CurrentVersion = version
+	}
+	if err := cfg.Save(); err != nil {
+		log.Fatalf("save config: %v", err)
+	}
 
-	if err := os.WriteFile("/etc/systemd/system/updater.service", []byte(unit), 0644); err != nil {
-		log.Fatalf("failed to write service file (run with sudo): %v", err)
+	unit := fmt.Sprintf(serviceTemplate, binPath, cfgPath)
+	unitPath := "/etc/systemd/system/" + serviceName
+	if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
+		log.Fatalf("write %s (run with sudo): %v", unitPath, err)
 	}
 
 	for _, args := range [][]string{
 		{"systemctl", "daemon-reload"},
-		{"systemctl", "enable", "updater.service"},
-		{"systemctl", "restart", "updater.service"},
+		{"systemctl", "enable", serviceName},
+		{"systemctl", "restart", serviceName},
 	} {
 		cmd := exec.Command(args[0], args[1:]...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			log.Fatalf("failed to run %s: %v", strings.Join(args, " "), err)
+			log.Fatalf("%s: %v", strings.Join(args, " "), err)
 		}
 	}
 
-	log.Println("✅ updater.service installed, enabled, and started")
-	log.Println("   systemctl status updater    — check status")
-	log.Println("   journalctl -u updater -f    — follow logs")
+	log.Printf("✅ %s installed (config=%s)", serviceName, cfgPath)
+	log.Printf("   systemctl status snapsec-agent")
+	log.Printf("   journalctl -u snapsec-agent -f")
 }
 
 func uninstallService() {
 	for _, args := range [][]string{
-		{"systemctl", "stop", "updater.service"},
-		{"systemctl", "disable", "updater.service"},
+		{"systemctl", "stop", serviceName},
+		{"systemctl", "disable", serviceName},
 	} {
 		cmd := exec.Command(args[0], args[1:]...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.Run() // ignore errors, service may not exist
+		_ = cmd.Run()
 	}
-
-	os.Remove("/etc/systemd/system/updater.service")
-	exec.Command("systemctl", "daemon-reload").Run()
-
-	log.Println("✅ updater.service removed")
-}
-
-func printUsage() {
-	fmt.Println(`Usage: updater [command]
-
-Commands:
-  (none)        Start the server in foreground
-  --install     Install and start as a systemd service (requires sudo)
-                  --compose-dir=<path>  Set the docker-compose working directory
-  --uninstall   Stop and remove the systemd service (requires sudo)
-  --status      Show the systemd service status`)
-}
-
-func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "--install":
-			installService()
-			return
-		case "--uninstall":
-			uninstallService()
-			return
-		case "--status":
-			cmd := exec.Command("systemctl", "status", "updater.service")
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Run()
-			return
-		case "--help", "-h":
-			printUsage()
-			return
-		default:
-			fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
-			printUsage()
-			os.Exit(1)
-		}
-	}
-
-	port := os.Getenv("UPDATER_PORT")
-	if port == "" {
-		port = "9876"
-	}
-
-	log.Println("Checking dependencies...")
-	checkDependencies()
-
-	mux := http.NewServeMux()
-
-	// Health check
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
-		})
-	})
-
-	// Docker update and cleanup
-	mux.HandleFunc("POST /api/update", handlers.HandleUpdate)
-
-	// Shell session via upterm
-	mux.HandleFunc("POST /api/shell", handlers.HandleShell)
-
-	// Bind to localhost only — do NOT expose externally
-	addr := fmt.Sprintf("127.0.0.1:%s", port)
-	log.Printf("🚀 Updater service listening on %s", addr)
-
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 5 * time.Minute, // long timeout for docker pull operations
-		IdleTimeout:  60 * time.Second,
-	}
-
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("server failed: %v", err)
-	}
+	_ = os.Remove("/etc/systemd/system/" + serviceName)
+	_ = exec.Command("systemctl", "daemon-reload").Run()
+	log.Printf("✅ %s removed", serviceName)
 }

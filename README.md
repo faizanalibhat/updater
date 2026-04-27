@@ -1,96 +1,157 @@
-# Updater Service
+# snapsec-agent
 
-A lightweight Go HTTP service that runs on **localhost only** and provides endpoints for Docker updates and remote shell access via [upterm](https://github.com/owenthereal/upterm).
+A small, single-binary Go agent that runs on every on-prem product host. It
+is **capability-driven**: the [admin panel](https://admin.snapsec.co) returns
+a list of *actions* in response to the agent's heartbeat, and the agent only
+executes actions whose capability it has registered locally.
 
-## Endpoints
+## Responsibilities
 
-### `GET /api/health`
-Health check — returns service status and current time.
+1. **Service install** — Registers itself as a systemd unit
+   (`snapsec-agent.service`) that survives host restarts.
+2. **Auto-update** — Each heartbeat may carry a `latest_version` /
+   `download_url`; the agent atomically replaces its own binary and asks
+   systemd to restart it.
+3. **Capability execution** — Runs predefined capabilities against actions
+   delivered in heartbeat responses.
 
-### `POST /api/update`
-Triggers a Docker Compose pull, up, and system prune to deploy new changes.
+## Capabilities
 
-**Request Body** (all fields optional):
+| Name | Description | Params |
+|---|---|---|
+| `update_application` | Runs `./setup.sh update` from the configured product install dir. | `install_dir` *(optional override)* |
+| `set_license_expiry` | Connects to the local mongo and updates `license.expires_at` on an org document. | `org_id` *(hex ObjectId, required)*, `expires_at` *(RFC3339, required)*, `database`, `collection` |
+
+## Workflow
+
+```
++---------+   setup.sh install            +-------------+
+|  Host   | ----------------------------> | snapsec-    |
+| (root)  |   --admin-url/--enrollment    | agent       |
++---------+                               +------+------+
+                                                 |
+            (1) POST /api/v1/agents/register     |
+                + hostname/os/arch/caps          v
+                                          +-------------+
+                                          | admin.      |
+                                          | snapsec.co  |
+                                          +------+------+
+            (2) { agent_id }   <-----------------|
+                stored in /etc/snapsec-agent/config.yaml
+                                                 |
+            (3) POST /api/v1/agents/heartbeat    |
+                every N seconds         -------->|
+            (4) { actions[], latest_version }    |
+                <--------------------------------|
+            (5) execute capabilities, report results next heartbeat
+            (6) if latest_version != current  ->  self-update + restart
+```
+
+## Install on a host
+
+```bash
+# Build (or grab a release tarball)
+go build -ldflags="-X main.version=$(git describe --tags --always)" -o snapsec-agent .
+
+# Install as systemd service
+sudo ./snapsec-agent --install \
+  --admin-url https://admin.snapsec.co \
+  --enrollment-token <ONE_TIME_TOKEN_FROM_ADMIN_PANEL> \
+  --install-dir /root/staging \
+  --mongo-uri mongodb://127.0.0.1:27017 \
+  --mongo-db snapsec
+```
+
+This writes `/etc/systemd/system/snapsec-agent.service`, `enable`s it, and
+starts it. The agent auto-registers and stores `agent_id` into
+`/etc/snapsec-agent/config.yaml`.
+
+```bash
+sudo ./snapsec-agent --status     # systemctl status
+sudo ./snapsec-agent --uninstall  # stop + remove unit
+sudo ./snapsec-agent --version
+journalctl -u snapsec-agent -f
+```
+
+## Configuration (`/etc/snapsec-agent/config.yaml`)
+
+```yaml
+agent_id: ""                   # filled in on first successful registration
+admin_url: https://admin.snapsec.co
+enrollment_token: ""           # cleared after registration
+heartbeat_interval_seconds: 30
+install_dir: /root/staging
+mongo_uri: mongodb://127.0.0.1:27017
+mongo_database: snapsec
+current_version: ""
+```
+
+Override with `--config /path/to/config.yaml` or `SNAPSEC_AGENT_CONFIG=...`.
+
+## API contract (admin side)
+
+### `POST /api/v1/agents/register`
+
 ```json
 {
-  "services": ["vm", "auth"],
-  "composeFile": "/path/to/docker-compose.yml",
-  "workDir": "/root/staging"
+  "hostname": "...",
+  "os": "linux",
+  "arch": "amd64",
+  "agent_version": "v1.2.3",
+  "capabilities": ["update_application", "set_license_expiry"],
+  "enrollment_token": "..."
 }
 ```
 
-**Response:**
+Response:
+
+```json
+{ "agent_id": "..." }
+```
+
+### `POST /api/v1/agents/heartbeat`
+
 ```json
 {
-  "success": true,
-  "steps": [
+  "agent_id": "...",
+  "agent_version": "v1.2.3",
+  "hostname": "...",
+  "capabilities": ["update_application", "set_license_expiry"],
+  "timestamp": "2026-04-27T10:00:00Z",
+  "last_results": [
     {
-      "name": "Docker Compose Pull",
-      "command": "docker compose pull",
+      "action_id": "...",
+      "capability": "update_application",
+      "success": true,
       "output": "...",
-      "duration": "12.345s"
-    },
-    ...
+      "started_at": "...",
+      "completed_at": "..."
+    }
   ]
 }
 ```
 
-### `POST /api/shell`
-Starts an [upterm](https://github.com/owenthereal/upterm) terminal sharing session and returns the SSH connection details.
+Response:
 
-**Request Body** (all fields optional):
 ```json
 {
-  "command": "/bin/bash",
-  "server": "ssh://uptermd.upterm.dev:22"
+  "actions": [
+    { "id": "act_1", "type": "update_application", "params": {} },
+    { "id": "act_2", "type": "set_license_expiry",
+      "params": { "org_id": "65...", "expires_at": "2027-01-01T00:00:00Z" } }
+  ],
+  "latest_version": "v1.2.4",
+  "download_url": "https://releases.snapsec.co/agent/v1.2.4/snapsec-agent",
+  "download_sha256": "abc...",
+  "heartbeat_interval_seconds": 30
 }
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "sessionId": "abc123...",
-  "ssh": "ssh TOKEN@uptermd.upterm.dev",
-  "host": "ssh://uptermd.upterm.dev:22",
-  "command": "/bin/bash",
-  "raw": { ... }
-}
+## Layout
+
 ```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `UPDATER_PORT` | `9876` | Port to listen on (always bound to 127.0.0.1) |
-| `COMPOSE_WORK_DIR` | `/root/staging` | Working directory for docker compose commands |
-| `COMPOSE_FILE` | *(auto)* | Path to docker-compose file |
-| `UPTERM_SERVER` | `ssh://uptermd.upterm.dev:22` | Upterm server address |
-
-## Prerequisites
-
-- **Docker** and **Docker Compose** (for `/api/update`)
-- **upterm** CLI installed in `$PATH` (for `/api/shell`)
-
-## Running Locally
-
-```bash
-cd updater
-go run .
+main.go                          # CLI: --install / --uninstall / run
+internal/config/                 # config.yaml load/save
+internal/capabilities/           # registry + capability implementations
+internal/agent/                  # client + register/heartbeat loop + self-update
 ```
-
-## Building
-
-```bash
-go build -o updater .
-./updater
-```
-
-## Docker
-
-```bash
-docker build -t updater .
-docker run --network host -v /var/run/docker.sock:/var/run/docker.sock updater
-```
-
-> **Note**: The container needs access to the Docker socket to manage other containers, and `--network host` to bind to the host's localhost.

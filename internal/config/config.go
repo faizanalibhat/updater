@@ -1,0 +1,147 @@
+// Package config holds the persistent on-disk configuration for the agent.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config is the persistent on-disk configuration for the agent.
+type Config struct {
+	// AgentID is assigned by the admin server on first registration.
+	AgentID string `yaml:"agent_id"`
+
+	// AdminURL is the base URL of the admin control plane,
+	// e.g. https://admin.snapsec.co
+	AdminURL string `yaml:"admin_url"`
+
+	// AdminBasePath is the URL prefix under AdminURL where the agent /
+	// instance routes are mounted. The default matches the obfuscated
+	// prefix used by admin.snapsec.co; override per environment.
+	AdminBasePath string `yaml:"admin_base_path"`
+
+	// EnrollmentToken is an optional one-time token used during initial
+	// registration. It is cleared from the file once an agent_id is issued.
+	EnrollmentToken string `yaml:"enrollment_token,omitempty"`
+
+	// HeartbeatIntervalSeconds controls how often the agent beats.
+	HeartbeatIntervalSeconds int `yaml:"heartbeat_interval_seconds"`
+
+	// InstallDir is the directory containing setup.sh (used by the
+	// update_application capability).
+	InstallDir string `yaml:"install_dir"`
+
+	// MongoURI is the connection string used by the set_license_expiry
+	// capability to talk to the local mongo instance.
+	MongoURI string `yaml:"mongo_uri"`
+
+	// MongoDatabase is the database that holds the orgs collection.
+	MongoDatabase string `yaml:"mongo_database"`
+
+	// CurrentVersion tracks the version of the running agent binary.
+	CurrentVersion string `yaml:"current_version"`
+
+	// path is where the file lives on disk (not serialized).
+	path string `yaml:"-"`
+	mu   sync.Mutex
+}
+
+// DefaultPath returns the default config path: /etc/snapsec-agent/config.yaml,
+// or $SNAPSEC_AGENT_CONFIG when set.
+func DefaultPath() string {
+	if p := os.Getenv("SNAPSEC_AGENT_CONFIG"); p != "" {
+		return p
+	}
+	return "/etc/snapsec-agent/config.yaml"
+}
+
+// Load reads the config from disk. If the file does not exist, a Config
+// with sane defaults is returned (and path set), but no file is created.
+func Load(path string) (*Config, error) {
+	if path == "" {
+		path = DefaultPath()
+	}
+
+	cfg := &Config{
+		path:                     path,
+		AdminURL:                 "https://admin.snapsec.co",
+		AdminBasePath:            "/z4to1w2Ww0tviBr5fAMusiSLHsUKf2GKP3cz4xdTt6fWT05X/v1/instances",
+		HeartbeatIntervalSeconds: 30,
+		InstallDir:               "/root/staging",
+		MongoURI:                 "mongodb://127.0.0.1:27017",
+		MongoDatabase:            "snapsec",
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, nil
+		}
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	cfg.path = path
+
+	if cfg.HeartbeatIntervalSeconds <= 0 {
+		cfg.HeartbeatIntervalSeconds = 30
+	}
+	if cfg.AdminURL == "" {
+		cfg.AdminURL = "https://admin.snapsec.co"
+	}
+	if cfg.AdminBasePath == "" {
+		cfg.AdminBasePath = "/z4to1w2Ww0tviBr5fAMusiSLHsUKf2GKP3cz4xdTt6fWT05X/v1/instances"
+	}
+	return cfg, nil
+}
+
+// Save writes the config back to disk atomically.
+func (c *Config) Save() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.path == "" {
+		c.path = DefaultPath()
+	}
+
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
+		return fmt.Errorf("mkdir config dir: %w", err)
+	}
+
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	tmp := c.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("write tmp config: %w", err)
+	}
+	if err := os.Rename(tmp, c.path); err != nil {
+		return fmt.Errorf("rename tmp config: %w", err)
+	}
+	return nil
+}
+
+// Path returns the file path this config was loaded from.
+func (c *Config) Path() string { return c.path }
+
+// SetAgentID sets the agent id and persists the config.
+func (c *Config) SetAgentID(id string) error {
+	c.AgentID = id
+	c.EnrollmentToken = "" // one-time use
+	return c.Save()
+}
+
+// SetVersion updates the current version and persists the config.
+func (c *Config) SetVersion(v string) error {
+	c.CurrentVersion = v
+	return c.Save()
+}
