@@ -61,7 +61,8 @@ type registerRequest struct {
 }
 
 type heartbeatRequest struct {
-	AgentID string `json:"agentId"`
+	AgentID string       `json:"agentId"`
+	Orgs    []orgLicence `json:"orgs,omitempty"`
 }
 
 // adminAction matches the embedded action subdoc on the Instance schema:
@@ -156,7 +157,10 @@ func (c *Client) EnsureRegistered(ctx context.Context, capNames []string, versio
 // loop, but the current admin server does not consume them; only `agentId`
 // is sent on the wire.
 func (c *Client) Heartbeat(ctx context.Context, capNames, version string, lastResults []capabilities.Result) (*HeartbeatResponse, error) {
-	body := heartbeatRequest{AgentID: c.cfg.AgentID}
+	body := heartbeatRequest{
+		AgentID: c.cfg.AgentID,
+		Orgs:    collectOrgLicences(ctx, c.cfg.MongoURI, c.cfg.MongoDatabase),
+	}
 
 	var env envelope[heartbeatResponseData]
 	if err := c.postJSON(ctx, c.heartbeatURL(), body, &env); err != nil {
