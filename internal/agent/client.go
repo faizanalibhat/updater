@@ -56,6 +56,7 @@ type serverHardware struct {
 
 type registerRequest struct {
 	BaseURL        string         `json:"base_url"`
+	Hostname       string         `json:"hostname,omitempty"`
 	ServerHardware serverHardware `json:"server_hardware"`
 	Status         string         `json:"status,omitempty"`
 }
@@ -126,7 +127,8 @@ func (c *Client) EnsureRegistered(ctx context.Context, capNames []string, versio
 
 	host, _ := os.Hostname()
 	body := registerRequest{
-		BaseURL: host,
+		BaseURL:  c.cfg.BaseURL,
+		Hostname: host,
 		ServerHardware: serverHardware{
 			RAM:  detectRAM(),
 			CPU:  strconv.Itoa(runtime.NumCPU()) + " Cores",

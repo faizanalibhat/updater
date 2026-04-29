@@ -20,6 +20,11 @@ type Config struct {
 	// e.g. https://admin.snapsec.co
 	AdminURL string `yaml:"admin_url"`
 
+	// BaseURL is the public-facing URL where this on-prem instance is
+	// hosted (matches BASE_URL in the product .env). Reported to the
+	// admin server on registration.
+	BaseURL string `yaml:"base_url"`
+
 	// AdminBasePath is the URL prefix under AdminURL where the agent /
 	// instance routes are mounted. The default matches the obfuscated
 	// prefix used by admin.snapsec.co; override per environment.

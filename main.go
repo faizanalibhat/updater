@@ -51,6 +51,7 @@ func main() {
 		fStatus         = flag.Bool("status", false, "show systemd service status")
 		fConfig         = flag.String("config", "", "path to config.yaml (overrides $SNAPSEC_AGENT_CONFIG and the default)")
 		fAdminURL       = flag.String("admin-url", "", "(install) admin server base URL, e.g. https://admin.snapsec.co")
+		fBaseURL        = flag.String("base-url", "", "(install) public-facing URL where this instance is hosted (matches BASE_URL in the product .env)")
 		fEnroll         = flag.String("enrollment-token", "", "(install) one-time enrollment token issued by the admin panel")
 		fInstallDir     = flag.String("install-dir", "", "(install) product install directory containing setup.sh")
 		fMongoURI       = flag.String("mongo-uri", "", "(install) mongo URI used by the set_license_expiry capability")
@@ -68,7 +69,7 @@ func main() {
 
 	switch {
 	case *fInstall:
-		installService(*fConfig, *fAdminURL, *fEnroll, *fInstallDir, *fMongoURI, *fMongoDB, *fCFAccessID, *fCFAccessSecret)
+		installService(*fConfig, *fAdminURL, *fBaseURL, *fEnroll, *fInstallDir, *fMongoURI, *fMongoDB, *fCFAccessID, *fCFAccessSecret)
 		return
 	case *fUninstall:
 		uninstallService()
@@ -112,7 +113,7 @@ func main() {
 
 // ---- service management ---------------------------------------------------
 
-func installService(cfgPath, adminURL, enrollment, installDir, mongoURI, mongoDB, cfID, cfSecret string) {
+func installService(cfgPath, adminURL, baseURL, enrollment, installDir, mongoURI, mongoDB, cfID, cfSecret string) {
 	binPath, err := os.Executable()
 	if err != nil {
 		log.Fatalf("resolve binary path: %v", err)
@@ -131,6 +132,9 @@ func installService(cfgPath, adminURL, enrollment, installDir, mongoURI, mongoDB
 	}
 	if adminURL != "" {
 		cfg.AdminURL = adminURL
+	}
+	if baseURL != "" {
+		cfg.BaseURL = baseURL
 	}
 	if enrollment != "" {
 		cfg.EnrollmentToken = enrollment
