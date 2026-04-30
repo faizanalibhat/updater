@@ -55,10 +55,11 @@ type serverHardware struct {
 }
 
 type registerRequest struct {
-	BaseURL        string         `json:"base_url"`
-	Hostname       string         `json:"hostname,omitempty"`
-	ServerHardware serverHardware `json:"server_hardware"`
-	Status         string         `json:"status,omitempty"`
+	EnrollmentToken string         `json:"enrollment_token"`
+	BaseURL         string         `json:"base_url"`
+	Hostname        string         `json:"hostname,omitempty"`
+	ServerHardware  serverHardware `json:"server_hardware"`
+	Status          string         `json:"status,omitempty"`
 }
 
 type heartbeatRequest struct {
@@ -125,10 +126,15 @@ func (c *Client) EnsureRegistered(ctx context.Context, capNames []string, versio
 		return nil
 	}
 
+	if c.cfg.EnrollmentToken == "" {
+		return fmt.Errorf("register: no enrollment_token in config (re-run --install with --enrollment-token)")
+	}
+
 	host, _ := os.Hostname()
 	body := registerRequest{
-		BaseURL:  c.cfg.BaseURL,
-		Hostname: host,
+		EnrollmentToken: c.cfg.EnrollmentToken,
+		BaseURL:         c.cfg.BaseURL,
+		Hostname:        host,
 		ServerHardware: serverHardware{
 			RAM:  detectRAM(),
 			CPU:  strconv.Itoa(runtime.NumCPU()) + " Cores",
