@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"snapsec-agent/internal/dotenv"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -49,11 +50,16 @@ type Config struct {
 	InstallDir string `yaml:"install_dir"`
 
 	// MongoURI is the connection string used by the set_license_expiry
-	// capability to talk to the local mongo instance.
-	MongoURI string `yaml:"mongo_uri"`
+	// capability to talk to the local mongo instance. Treated as a
+	// fallback only — the live values are derived from
+	// <InstallDir>/.env (MONGODB_HOST/PORT/USER/PASS) on every access
+	// via MongoConnection().
+	MongoURI string `yaml:"mongo_uri,omitempty"`
 
 	// MongoDatabase is the database that holds the orgs collection.
-	MongoDatabase string `yaml:"mongo_database"`
+	// Same fallback semantics as MongoURI: read from .env on every
+	// access via MongoConnection().
+	MongoDatabase string `yaml:"mongo_database,omitempty"`
 
 	// CurrentVersion tracks the version of the running agent binary.
 	CurrentVersion string `yaml:"current_version"`
@@ -85,7 +91,6 @@ func Load(path string) (*Config, error) {
 		AdminBasePath:            "/z4to1w2Ww0tviBr5fAMusiSLHsUKf2GKP3cz4xdTt6fWT05X/v1/instances",
 		HeartbeatIntervalSeconds: 30,
 		InstallDir:               "/root/staging",
-		MongoURI:                 "mongodb://127.0.0.1:27017",
 		MongoDatabase:            "snapsec",
 	}
 
@@ -156,4 +161,33 @@ func (c *Config) SetAgentID(id string) error {
 func (c *Config) SetVersion(v string) error {
 	c.CurrentVersion = v
 	return c.Save()
+}
+
+// MongoConnection resolves the mongo URI and database name to use right
+// now. It reads <InstallDir>/.env each call (so the agent always tracks
+// the live MONGODB_HOST/PORT/USER/PASS values managed by setup.sh) and
+// falls back to the persisted Config fields when the .env is missing or
+// incomplete. The database defaults to "snapsec" when neither source
+// supplies one.
+func (c *Config) MongoConnection() (uri, db string) {
+	if c.InstallDir != "" {
+		env, err := dotenv.Read(filepath.Join(c.InstallDir, ".env"))
+		if err == nil {
+			if u, d := dotenv.MongoURIFromEnv(env); u != "" {
+				if d == "" {
+					d = c.MongoDatabase
+				}
+				if d == "" {
+					d = "snapsec"
+				}
+				return u, d
+			}
+		}
+	}
+	uri = c.MongoURI
+	db = c.MongoDatabase
+	if db == "" {
+		db = "snapsec"
+	}
+	return uri, db
 }

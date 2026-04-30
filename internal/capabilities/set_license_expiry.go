@@ -15,6 +15,10 @@ import (
 // orgs in the local mongo, and they all share a single licence — so this
 // capability fans the new expiry across all org documents.
 //
+// The mongo connection is resolved on every invocation via the supplied
+// resolver, so the agent always picks up the live MONGODB_* values from
+// the product .env (rather than a stale value persisted at install time).
+//
 // The field written matches the Auth service's Org schema:
 //
 //	licenceExpiry  (Date, top-level)
@@ -23,8 +27,8 @@ import (
 //
 //	expires_at    (string, required)  RFC3339 timestamp, e.g. 2026-12-31T00:00:00Z
 //	collection    (string, optional)  defaults to "orgs"
-//	database      (string, optional)  overrides cfg DB
-func SetLicenseExpiry(mongoURI, defaultDB string) Handler {
+//	database      (string, optional)  overrides the resolver's DB
+func SetLicenseExpiry(resolveMongo func() (uri, db string)) Handler {
 	return func(ctx context.Context, params map[string]any) (string, error) {
 		expiresRaw, _ := params["expires_at"].(string)
 		if expiresRaw == "" {
@@ -34,6 +38,14 @@ func SetLicenseExpiry(mongoURI, defaultDB string) Handler {
 		expires, err := time.Parse(time.RFC3339, expiresRaw)
 		if err != nil {
 			return "", fmt.Errorf("invalid expires_at: %w", err)
+		}
+
+		mongoURI, defaultDB := "", ""
+		if resolveMongo != nil {
+			mongoURI, defaultDB = resolveMongo()
+		}
+		if mongoURI == "" {
+			return "", fmt.Errorf("mongo connection is not configured (check MONGODB_HOST/PORT in the product .env)")
 		}
 
 		db := defaultDB

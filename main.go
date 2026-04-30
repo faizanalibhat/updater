@@ -53,9 +53,7 @@ func main() {
 		fAdminURL       = flag.String("admin-url", "", "(install) admin server base URL, e.g. https://admin.snapsec.co")
 		fBaseURL        = flag.String("base-url", "", "(install) public-facing URL where this instance is hosted (matches BASE_URL in the product .env)")
 		fEnroll         = flag.String("enrollment-token", "", "(install) one-time enrollment token issued by the admin panel")
-		fInstallDir     = flag.String("install-dir", "", "(install) product install directory containing setup.sh")
-		fMongoURI       = flag.String("mongo-uri", "", "(install) mongo URI used by the set_license_expiry capability")
-		fMongoDB        = flag.String("mongo-db", "", "(install) mongo database name")
+		fInstallDir     = flag.String("install-dir", "", "(install) product install directory containing setup.sh and .env")
 		fCFAccessID     = flag.String("cf-access-id", "", "(install) Cloudflare Access service token client id")
 		fCFAccessSecret = flag.String("cf-access-secret", "", "(install) Cloudflare Access service token client secret")
 		fVersion        = flag.Bool("version", false, "print version and exit")
@@ -69,7 +67,7 @@ func main() {
 
 	switch {
 	case *fInstall:
-		installService(*fConfig, *fAdminURL, *fBaseURL, *fEnroll, *fInstallDir, *fMongoURI, *fMongoDB, *fCFAccessID, *fCFAccessSecret)
+		installService(*fConfig, *fAdminURL, *fBaseURL, *fEnroll, *fInstallDir, *fCFAccessID, *fCFAccessSecret)
 		return
 	case *fUninstall:
 		uninstallService()
@@ -98,7 +96,7 @@ func main() {
 
 	reg := capabilities.NewRegistry()
 	reg.Register("update_application", capabilities.UpdateApplication(cfg.InstallDir))
-	reg.Register("set_license_expiry", capabilities.SetLicenseExpiry(cfg.MongoURI, cfg.MongoDatabase))
+	reg.Register("set_license_expiry", capabilities.SetLicenseExpiry(cfg.MongoConnection))
 
 	log.Printf("snapsec-agent version=%s config=%s admin=%s", version, cfg.Path(), cfg.AdminURL)
 	log.Printf("registered capabilities: %s", strings.Join(reg.Names(), ", "))
@@ -113,7 +111,7 @@ func main() {
 
 // ---- service management ---------------------------------------------------
 
-func installService(cfgPath, adminURL, baseURL, enrollment, installDir, mongoURI, mongoDB, cfID, cfSecret string) {
+func installService(cfgPath, adminURL, baseURL, enrollment, installDir, cfID, cfSecret string) {
 	binPath, err := os.Executable()
 	if err != nil {
 		log.Fatalf("resolve binary path: %v", err)
@@ -141,12 +139,6 @@ func installService(cfgPath, adminURL, baseURL, enrollment, installDir, mongoURI
 	}
 	if installDir != "" {
 		cfg.InstallDir = installDir
-	}
-	if mongoURI != "" {
-		cfg.MongoURI = mongoURI
-	}
-	if mongoDB != "" {
-		cfg.MongoDatabase = mongoDB
 	}
 	if cfID != "" {
 		cfg.CFAccessClientID = cfID
