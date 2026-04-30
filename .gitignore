@@ -14,3 +14,7 @@ updater_linux_*
 # Temp
 tmp/
 *.log
+
+# Local build artifacts
+snapsec-agent
+snapsec-agent_linux_*
