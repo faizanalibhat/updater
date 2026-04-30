@@ -91,7 +91,7 @@ func Load(path string) (*Config, error) {
 		AdminBasePath:            "/z4to1w2Ww0tviBr5fAMusiSLHsUKf2GKP3cz4xdTt6fWT05X/v1/instances",
 		HeartbeatIntervalSeconds: 30,
 		InstallDir:               "/root/staging",
-		MongoDatabase:            "snapsec",
+		MongoDatabase:            "auth",
 	}
 
 	data, err := os.ReadFile(path)
@@ -189,7 +189,7 @@ func (c *Config) MongoConnection() (uri, db string) {
 					d = c.MongoDatabase
 				}
 				if d == "" {
-					d = "snapsec"
+					d = "auth"
 				}
 				return u, d
 			}
@@ -198,7 +198,7 @@ func (c *Config) MongoConnection() (uri, db string) {
 	uri = c.MongoURI
 	db = c.MongoDatabase
 	if db == "" {
-		db = "snapsec"
+		db = "auth"
 	}
 	return uri, db
 }
