@@ -35,7 +35,7 @@ func SetLicenseExpiry(resolveMongo func() (uri, db string)) Handler {
 			return "", fmt.Errorf("expires_at is required")
 		}
 
-		expires, err := time.Parse(time.RFC3339, expiresRaw)
+		expires, err := parseExpiresAt(expiresRaw)
 		if err != nil {
 			return "", fmt.Errorf("invalid expires_at: %w", err)
 		}
@@ -96,4 +96,17 @@ func SetLicenseExpiry(resolveMongo func() (uri, db string)) Handler {
 		return fmt.Sprintf("updated licenceExpiry to %s for all orgs in %s.%s (matched=%d modified=%d)",
 			expires.Format(time.RFC3339), db, coll, res.MatchedCount, res.ModifiedCount), nil
 	}
+}
+
+// parseExpiresAt accepts either a full RFC3339 timestamp or a bare
+// "YYYY-MM-DD" date (which admin's UI commonly emits). Date-only inputs
+// are interpreted as 00:00:00 UTC on that day.
+func parseExpiresAt(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("parsing time %q as RFC3339 or YYYY-MM-DD", s)
 }
