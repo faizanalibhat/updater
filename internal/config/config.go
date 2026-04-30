@@ -173,6 +173,17 @@ func (c *Config) MongoConnection() (uri, db string) {
 	if c.InstallDir != "" {
 		env, err := dotenv.Read(filepath.Join(c.InstallDir, ".env"))
 		if err == nil {
+			// Host-side overrides: the agent runs outside docker, so the
+			// product .env's MONGODB_HOST=mongodb (a docker-network DNS
+			// name) is unreachable. Allow the systemd unit (or operator)
+			// to redirect to a host-reachable address without touching
+			// the shared .env that compose services depend on.
+			if v := os.Getenv("SNAPSEC_AGENT_MONGODB_HOST"); v != "" {
+				env["MONGODB_HOST"] = v
+			}
+			if v := os.Getenv("SNAPSEC_AGENT_MONGODB_PORT"); v != "" {
+				env["MONGODB_PORT"] = v
+			}
 			if u, d := dotenv.MongoURIFromEnv(env); u != "" {
 				if d == "" {
 					d = c.MongoDatabase

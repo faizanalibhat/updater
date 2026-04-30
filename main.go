@@ -34,6 +34,10 @@ Restart=always
 RestartSec=5
 Environment=SNAPSEC_AGENT_CONFIG=%s
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Host-side agent reaches mongo via its docker-published port (see
+# onprem-setup/docker-compose.yaml: mongodb.ports). Override the
+# in-network hostname from the product .env without mutating it.
+Environment=SNAPSEC_AGENT_MONGODB_HOST=127.0.0.1
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=snapsec-agent
