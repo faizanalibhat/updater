@@ -48,6 +48,7 @@ executes actions whose capability it has registered locally.
             (6) if latest_version != current  ->  self-update + restart
 ```
 
+
 ## Install on a host
 
 ```bash
