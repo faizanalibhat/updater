@@ -75,6 +75,7 @@ sudo ./snapsec-agent --version
 journalctl -u snapsec-agent -f
 ```
 
+
 ## Configuration (`/etc/snapsec-agent/config.yaml`)
 
 ```yaml
