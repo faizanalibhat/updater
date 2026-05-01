@@ -20,6 +20,7 @@ executes actions whose capability it has registered locally.
 | Name | Description | Params |
 |---|---|---|
 | `update_application` | Runs `./setup.sh update` from the configured product install dir. | `install_dir` *(optional override)* |
+| `repair_infra` | Stops infrastructure (`docker compose down`), restarts docker service, and runs `./setup.sh update`. | `install_dir` *(optional override)* |
 | `set_license_expiry` | Connects to the local mongo and updates `license.expires_at` on an org document. | `org_id` *(hex ObjectId, required)*, `expires_at` *(RFC3339, required)*, `database`, `collection` |
 
 ## Workflow

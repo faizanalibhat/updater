@@ -100,6 +100,7 @@ func main() {
 
 	reg := capabilities.NewRegistry()
 	reg.Register("update_application", capabilities.UpdateApplication(cfg.InstallDir))
+	reg.Register("repair_infra", capabilities.RepairInfra(cfg.InstallDir))
 	reg.Register("set_license_expiry", capabilities.SetLicenseExpiry(cfg.MongoConnection))
 
 	log.Printf("snapsec-agent version=%s config=%s admin=%s", version, cfg.Path(), cfg.AdminURL)
